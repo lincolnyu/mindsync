@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -17,9 +18,23 @@ namespace mindsync
         }
         class Item
         {
-            public string Id {get; set;}
-            public string Message {get;set;}
+            public string Id { get; set; }
+            public string Message { get;set; }
+            public bool Pinned { get; set; }
+            public string TimeCreated { get; set; }
+            public string TimeUpdated { get; set; }
         }
+        class ItemOrderComparer : IComparer<Item>
+        {
+            public static readonly ItemOrderComparer Instance = new ItemOrderComparer();
+            public int Compare(Item x, Item y)
+            {
+                var c = x.Id.Length.CompareTo(y.Id.Length);
+                if (c != 0) return c;
+                return x.Id.CompareTo(y.Id);
+            }
+        }
+
         class Downloader
         {
             public const int DefaultMaxLen = 30000;
@@ -66,7 +81,7 @@ namespace mindsync
             }
             public void Serialize(StreamWriter sw)
             {
-                foreach (var (id, item) in _items)
+                foreach (var (_,item) in _items.OrderBy(kvp=>kvp.Value, ItemOrderComparer.Instance).Reverse())
                 {
                     sw.WriteLine($"{TitlePrefix}{item.Id}{TitleSuffix}");
                     sw.WriteLine($"{item.Message}");
@@ -76,7 +91,10 @@ namespace mindsync
             {
                 var entities = je.GetProperty("entities");
                 var isIndividual = !index.HasValue;
-                if (isIndividual) index = 0;
+                if (isIndividual)
+                {
+                    index = 0;
+                }
                 var entity = entities[index.Value];
                 var item = new Item
                 {
@@ -87,15 +105,24 @@ namespace mindsync
                 {
                     entityContent = entity;
                 }
-                if (isIndividual || entity.TryGetProperty("entity", out entityContent))
+                if ((isIndividual || entity.TryGetProperty("entity", out entityContent))
+                    && entityContent.ValueKind == JsonValueKind.Object)
                 {
-                    if (entityContent.ValueKind == JsonValueKind.Object 
-                        && entityContent.TryGetProperty("message", out var msgVal))
+                    if (entityContent.TryGetProperty("message", out var msgVal) && msgVal.ValueKind == JsonValueKind.String)
                     {
-                        if (msgVal.ValueKind == JsonValueKind.String)
-                        {
-                            item.Message = msgVal.GetString();
-                        }
+                        item.Message = msgVal.GetString();
+                    }
+                    if (entityContent.TryGetProperty("pinned", out var pinnedVal))
+                    {
+                        item.Pinned = pinnedVal.ValueKind == JsonValueKind.True;
+                    }
+                    if (entityContent.TryGetProperty("time_created", out var timeCreatedVal) && timeCreatedVal.ValueKind == JsonValueKind.String)
+                    {
+                        item.TimeCreated = timeCreatedVal.GetString();
+                    }
+                    if (entityContent.TryGetProperty("time_updated", out var timeUpdatedVal) && timeUpdatedVal.ValueKind == JsonValueKind.String)
+                    {
+                        item.TimeUpdated = timeUpdatedVal.GetString();
                     }
                 }
                 return item;
@@ -109,7 +136,8 @@ namespace mindsync
                 Parallel.For(0, len, (i, s)=>
                 {
                     var item = GetEntity(jsdoc.RootElement, i);
-                    if (force || !_items.ContainsKey(item.Id))
+                    var hasIt = _items.TryGetValue(item.Id, out var existingItem);
+                    if (force || !hasIt || string.IsNullOrWhiteSpace(existingItem.Message))
                     {
                         if (item.Message == null)
                         {
