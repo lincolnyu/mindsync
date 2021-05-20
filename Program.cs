@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace mindsync
@@ -74,9 +75,17 @@ namespace mindsync
                     }
                     else
                     {
-                        message.Clear();
                         message.AppendLine(line);
                     }
+                }
+                if (id != null)
+                {
+                    var item = new Item
+                    {
+                        Id = id,
+                        Message = message.ToString()
+                    };
+                    _items[id] = item;
                 }
             }
             public void Serialize(StreamWriter sw)
@@ -98,6 +107,7 @@ namespace mindsync
                 var entity = entities[index.Value];
                 var item = new Item
                 {
+                    // Note this can be the original mind and is different than the remind id
                     Id = entity.GetProperty("guid").ToString()
                 };
                 JsonElement entityContent = default(JsonElement); 
@@ -127,30 +137,38 @@ namespace mindsync
                 }
                 return item;
             }
-            public void UpdateList(int maxLen=DefaultMaxLen, bool force=false)
+            public int UpdateList(int maxLen=DefaultMaxLen, bool force=false)
             {
                 var url = $"https://www.minds.com/api/v2/feeds/container/{_userId}/activities?sync=1&limit={maxLen}";
                 var json = Download(url);
                 var jsdoc = JsonDocument.Parse(json);
                 var len = jsdoc.RootElement.GetProperty("entities").GetArrayLength();
+                var updateCount = 0;
                 Parallel.For(0, len, (i, s)=>
                 {
                     var item = GetEntity(jsdoc.RootElement, i);
-                    var hasIt = _items.TryGetValue(item.Id, out var existingItem);
-                    if (force || !hasIt || string.IsNullOrWhiteSpace(existingItem.Message))
+                    var itemId = item.Id;
+                    if (force || !_items.ContainsKey(item.Id))
                     {
-                        if (item.Message == null)
+                        if (item.Message == null)   // Not recent therefore not containing message. Have to open the entry
                         {
                             var msgUrl = $"https://www.minds.com/api/v2/entities/?urns=urn%3Aactivity%3A{item.Id}&as_activities=0&export_user_counts=false";
                             var msgJson = Download(msgUrl);
                             var msgJdoc = JsonDocument.Parse(msgJson);
                             item = GetEntity(msgJdoc.RootElement, null);
+                            item.Id = itemId;   // overwrite the original with remind id
                         }
-                        _items[item.Id] = item;
+                        _items[itemId] = item;
                         Console.Write($"\rDownloaded '{item.Id}'");
+                        Interlocked.Increment(ref updateCount);
                     }
                 });
-                Console.WriteLine("\n");
+                if (updateCount > 0)
+                {
+                    Console.WriteLine();
+                }
+                Console.WriteLine($"{updateCount} items updated.");
+                return updateCount;
             }
         }
         static void Main(string[] args)
@@ -180,7 +198,7 @@ namespace mindsync
                 using var srSynced = new StreamReader(fn);
                 dl.Deserialize(srSynced);
             }
-            dl.UpdateList(Downloader.DefaultMaxLen, force);
+            if (dl.UpdateList(Downloader.DefaultMaxLen, force) > 0)
             {
                 using var sw = new StreamWriter(fn);
                 dl.Serialize(sw);
