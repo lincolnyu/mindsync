@@ -43,7 +43,7 @@ namespace mindsync
             private const string TitleSuffix = "**"; 
             string _userId;
             Dictionary<string, Item> _items = new Dictionary<string, Item>(); 
-            public Downloader(string userId="1197537175369949199")
+            public Downloader(string userId)
             {
                 _userId = userId;
             }
@@ -173,34 +173,48 @@ namespace mindsync
         }
         static void Main(string[] args)
         {
-            var iforce = Array.IndexOf(args, "-f");
-            var force = false;
-            var fn = "out.txt";
-            if (iforce >= 0)
+            string l_arg = null;
+            bool force = false;
+            string userId = "1197537175369949199";
+            string outFile = "out.txt";
+            foreach (var arg in args)
             {
-                force = true;
-                if (iforce > 0)
+                if (l_arg != null)
                 {
-                    fn = args[0];
+                    if (l_arg == "-u")
+                    {
+                        userId = arg;
+                    }
+                    else if (l_arg == "-o")
+                    {
+                        outFile = arg;
+                    }
+                    l_arg = null;
                 }
-                else if (args.Length > 1)
+                else if (arg == "-u" || arg == "-o")
                 {
-                    fn = args[1];
+                    l_arg = arg;
+                }
+                else if (arg == "-f")
+                {
+                    force = true;
+                }
+                else if (arg == "-h")
+                {
+                    Console.WriteLine("Usage: <app> [-f] [-u <userid>] [-O <outputfile>]");
+                    Console.WriteLine("       <app> -h: Show this help.");
+                    return;
                 }
             }
-            else if (args.Length > 0)
+            var dl = new Downloader(userId);
+            if (File.Exists(outFile))
             {
-                fn = args[0];
-            }
-            var dl = new Downloader();
-            if (File.Exists(fn))
-            {
-                using var srSynced = new StreamReader(fn);
+                using var srSynced = new StreamReader(outFile);
                 dl.Deserialize(srSynced);
             }
             if (dl.UpdateList(Downloader.DefaultMaxLen, force) > 0)
             {
-                using var sw = new StreamWriter(fn);
+                using var sw = new StreamWriter(outFile);
                 dl.Serialize(sw);
             }
         }
