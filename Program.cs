@@ -42,7 +42,8 @@ namespace mindsync
             private const string TitlePrefix = "**MINDSYNC-";
             private const string TitleSuffix = "**"; 
             string _userId;
-            Dictionary<string, Item> _items = new Dictionary<string, Item>(); 
+            Dictionary<string, Item> _items = new Dictionary<string, Item>();
+            public List<string> EmptyUrls { get; } = new List<string>();
             public Downloader(string userId)
             {
                 _userId = userId;
@@ -155,8 +156,16 @@ namespace mindsync
                             var msgUrl = $"https://www.minds.com/api/v2/entities/?urns=urn%3Aactivity%3A{item.Id}&as_activities=0&export_user_counts=false";
                             var msgJson = Download(msgUrl);
                             var msgJdoc = JsonDocument.Parse(msgJson);
-                            item = GetEntity(msgJdoc.RootElement, null);
-                            item.Id = itemId;   // overwrite the original with remind id
+                            var mylen = msgJdoc.RootElement.GetProperty("entities").GetArrayLength();
+                            if (mylen > 0)
+                            {
+                                item = GetEntity(msgJdoc.RootElement, null);
+                                item.Id = itemId;   // overwrite the original with remind id
+                            }
+                            else
+                            {
+                                EmptyUrls.Add(msgUrl);
+                            }
                         }
                         _items[itemId] = item;
                         Console.Write($"\rDownloaded '{item.Id}'");
@@ -216,6 +225,14 @@ namespace mindsync
             {
                 using var sw = new StreamWriter(outFile);
                 dl.Serialize(sw);
+            }
+            if (dl.EmptyUrls.Count > 0)
+            {
+                Console.WriteLine("Following URLs empty:");
+                foreach (var eu in dl.EmptyUrls)
+                {
+                    Console.WriteLine($" {eu}");
+                } 
             }
         }
     }
