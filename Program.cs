@@ -38,7 +38,7 @@ namespace mindsync
 
         class Downloader
         {
-            public const int DefaultMaxLen = 30000;
+            public const int MindsMaxCount = 150;
             private const string TitlePrefix = "**MINDSYNC-";
             private const string TitleSuffix = "**"; 
             string _userId;
@@ -97,7 +97,7 @@ namespace mindsync
                     sw.WriteLine($"{item.Message}");
                 }
             }
-            private Item GetEntity(JsonElement je, int? index)
+            private Item ParseEntity(JsonElement je, int? index)
             {
                 var entities = je.GetProperty("entities");
                 var isIndividual = !index.HasValue;
@@ -138,16 +138,48 @@ namespace mindsync
                 }
                 return item;
             }
-            public int UpdateList(int maxLen=DefaultMaxLen, bool force=false)
+            private IEnumerable<Item> GetAllEntities(bool force)
             {
-                var url = $"https://www.minds.com/api/v2/feeds/container/{_userId}/activities?sync=1&limit={maxLen}";
-                var json = Download(url);
-                var jsdoc = JsonDocument.Parse(json);
-                var len = jsdoc.RootElement.GetProperty("entities").GetArrayLength();
+                string startTimeStamp=null;
+                while (true)
+                {
+                    var url = $"https://www.minds.com/api/v2/feeds/container/{_userId}/activities?sync=1&limit={MindsMaxCount}";
+                    if (startTimeStamp != null)
+                    {
+                        url += $"&from_timestamp={startTimeStamp}";
+                    }
+                    var json = Download(url);
+                    var jsdoc = JsonDocument.Parse(json);
+                    var len = jsdoc.RootElement.GetProperty("entities").GetArrayLength();
+                    for (var i = 0; i < len; i++)
+                    {
+                        var item = ParseEntity(jsdoc.RootElement, i);
+                        yield return item;
+                    }
+                    if (len < MindsMaxCount)
+                    {
+                        break;
+                    }
+                    if (jsdoc.RootElement.TryGetProperty("load-next", out var loadNext))
+                    {
+                        startTimeStamp = loadNext.GetString();
+                    }
+                    else
+                    {
+                        // Kind of unexpected
+                        break;
+                    }
+                }
+            }
+            // https://www.minds.com/api/v2/feeds/container/{user_id}/activities?sync=1&limit=150[&from_timestamp=<start_timestamp>]
+            public int UpdateList(bool force=false)
+            {
+                var entities = GetAllEntities(false).ToList();
+                var len = entities.Count();
                 var updateCount = 0;
                 Parallel.For(0, len, (i, s)=>
                 {
-                    var item = GetEntity(jsdoc.RootElement, i);
+                    var item = entities[i];
                     var itemId = item.Id;
                     if (force || !_items.ContainsKey(item.Id))
                     {
@@ -159,7 +191,7 @@ namespace mindsync
                             var mylen = msgJdoc.RootElement.GetProperty("entities").GetArrayLength();
                             if (mylen > 0)
                             {
-                                item = GetEntity(msgJdoc.RootElement, null);
+                                item = ParseEntity(msgJdoc.RootElement, null);
                                 item.Id = itemId;   // overwrite the original with remind id
                             }
                             else
@@ -221,7 +253,7 @@ namespace mindsync
                 using var srSynced = new StreamReader(outFile);
                 dl.Deserialize(srSynced);
             }
-            if (dl.UpdateList(Downloader.DefaultMaxLen, force) > 0)
+            if (dl.UpdateList(force) > 0)
             {
                 using var sw = new StreamWriter(outFile);
                 dl.Serialize(sw);
