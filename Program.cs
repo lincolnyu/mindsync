@@ -24,6 +24,7 @@ namespace mindsync
             public bool Pinned { get; set; }
             public string TimeCreated { get; set; }
             public string TimeUpdated { get; set; }
+            public string Remind {get; set;} = null;
         }
         class ItemOrderComparer : IComparer<Item>
         {
@@ -54,6 +55,7 @@ namespace mindsync
                 _items.Clear();
 
                 string id = null;
+                string remind = null;
                 var message = new StringBuilder();
                 while (!sr.EndOfStream)
                 {
@@ -65,6 +67,7 @@ namespace mindsync
                             var item = new Item
                             {
                                 Id = id,
+                                Remind = remind,
                                 Message = message.ToString()
                             };
                             _items[id] = item;
@@ -72,7 +75,10 @@ namespace mindsync
                         }
                         var pre = TitlePrefix.Length;
                         var post = TitleSuffix.Length;
-                        id = line.Substring(pre, line.Length-post-pre);
+                        var idstring = line.Substring(pre, line.Length-post-pre);
+                        var ids = idstring.Split("<<<");
+                        id = ids[0];
+                        remind = (ids.Length > 1)? ids[1] : null;
                     }
                     else
                     {
@@ -84,6 +90,7 @@ namespace mindsync
                     var item = new Item
                     {
                         Id = id,
+                        Remind = remind,
                         Message = message.ToString()
                     };
                     _items[id] = item;
@@ -93,7 +100,12 @@ namespace mindsync
             {
                 foreach (var (_,item) in _items.OrderBy(kvp=>kvp.Value, ItemOrderComparer.Instance).Reverse())
                 {
-                    sw.WriteLine($"{TitlePrefix}{item.Id}{TitleSuffix}");
+                    var idstring = item.Id;
+                    if (item.Remind != null)
+                    {
+                        idstring += $"<<<{item.Remind}";
+                    }
+                    sw.WriteLine($"{TitlePrefix}{idstring}{TitleSuffix}");
                     sw.WriteLine($"{item.Message}");
                 }
             }
@@ -135,6 +147,10 @@ namespace mindsync
                     {
                         item.TimeUpdated = timeUpdatedVal.GetString();
                     }
+                    if (entityContent.TryGetProperty("remind_object", out var remind) && remind.ValueKind == JsonValueKind.Object)
+                    {
+                        item.Remind = remind.GetProperty("guid").GetString();
+                    }
                 }
                 return item;
             }
@@ -169,6 +185,7 @@ namespace mindsync
                         // Kind of unexpected
                         break;
                     }
+                    break; //TODO remove this...
                 }
             }
             // https://www.minds.com/api/v2/feeds/container/{user_id}/activities?sync=1&limit=150[&from_timestamp=<start_timestamp>]
@@ -183,7 +200,7 @@ namespace mindsync
                     var itemId = item.Id;
                     if (force || !_items.ContainsKey(item.Id))
                     {
-                        if (item.Message == null)   // Not recent therefore not containing message. Have to open the entry
+                        if (item.Message == null)   // Not the first few therefore not containing message. Have to open the entry
                         {
                             var msgUrl = $"https://www.minds.com/api/v2/entities/?urns=urn%3Aactivity%3A{item.Id}&as_activities=0&export_user_counts=false";
                             var msgJson = Download(msgUrl);
